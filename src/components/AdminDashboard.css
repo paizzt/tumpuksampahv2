@@ -94,10 +94,15 @@
   padding: 2rem 1.5rem;
 }
 
+.admin-content section.table-wrapper,
+.admin-content section.admin-stats-grid {
+  padding: 0;
+}
+
 /* Stats Cards */
 .admin-stats-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 1.5rem;
   margin-bottom: 2rem;
 }
@@ -197,8 +202,14 @@
 
 .search-wrapper {
   position: relative;
-  max-width: 320px;
+  max-width: 100%;
   width: 100%;
+}
+
+@media(min-width: 768px) {
+  .search-wrapper {
+    max-width: 320px;
+  }
 }
 
 .search-icon {
@@ -429,6 +440,19 @@
   word-break: break-word;
 }
 
+/* Form Staff Grid Responsive */
+.staff-form-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+  align-items: end;
+}
+@media(min-width: 768px) {
+  .staff-form-grid {
+    grid-template-columns: 1fr 1fr 1fr auto;
+  }
+}
+
 /* Image preview in details */
 .logo-preview-box {
   border: 1px solid var(--color-border);
@@ -590,4 +614,15 @@
 
 .btn-back-home:hover {
   color: var(--color-primary-dark);
+}
+
+/* Tag chip */
+.tag {
+  display: inline-block;
+  background-color: var(--color-primary-light);
+  color: var(--color-primary-dark);
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.2rem 0.6rem;
+  border-radius: 99px;
 }

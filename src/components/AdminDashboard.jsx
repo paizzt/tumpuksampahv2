@@ -15,7 +15,17 @@ import {
   Sparkles,
   FileText,
   ExternalLink,
+  Calendar,
+  CheckCircle,
+  MapPin,
+  Truck,
+  Users,
+  Trash2,
+  Plus,
+  Pencil,
+  X
 } from 'lucide-react';
+import toast, { Toaster } from 'react-hot-toast';
 
 export default function AdminDashboard({ onBackToWeb }) {
   // Auth state
@@ -32,9 +42,29 @@ export default function AdminDashboard({ onBackToWeb }) {
   const [loadingData, setLoadingData] = useState(false);
   const [dataList, setDataList] = useState([]);
   const [selectedRecord, setSelectedRecord] = useState(null);
+  
+  // Tasks specific state
+  const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
+  const [scheduleDate, setScheduleDate] = useState('');
+  
+  const [completeModalOpen, setCompleteModalOpen] = useState(false);
+  const [pickupWeight, setPickupWeight] = useState('');
+  const [pickupNotes, setPickupNotes] = useState('');
+  
+  // Staff State
+  const [newStaffEmail, setNewStaffEmail] = useState('');
+  const [newStaffPassword, setNewStaffPassword] = useState('');
+  const [newStaffRole, setNewStaffRole] = useState('operasional');
 
-  // Statistics
-  const [stats, setStats] = useState({ umum: 0, bisnis: 0, minjel: 0 });
+  // Edit Staff State
+  const [editStaff, setEditStaff] = useState(null); // null = modal tutup
+  const [editEmail, setEditEmail] = useState('');
+  const [editPassword, setEditPassword] = useState('');
+  const [editRole, setEditRole] = useState('operasional');
+
+  // Statistics & Settings
+  const [stats, setStats] = useState({ umum: 0, bisnis: 0, minjel: 0, revenue: 0, target_revenue: 5000000 });
+  const [targetRevenueInput, setTargetRevenueInput] = useState('');
 
   // Get active session on mount
   useEffect(() => {
@@ -71,7 +101,7 @@ export default function AdminDashboard({ onBackToWeb }) {
         setUserRole(data.role);
         // Jika login sebagai operasional, pastikan tidak membuka tab bisnis
         if (data.role === 'operasional') {
-          setActiveTab('umum');
+          setActiveTab('tugas');
         }
       }
     } catch (err) {
@@ -130,12 +160,23 @@ export default function AdminDashboard({ onBackToWeb }) {
       const { count: countMinjel } = await supabase
         .from('minjel_registrations')
         .select('*', { count: 'exact', head: true });
+        
+      // Fetch target revenue from settings
+      const { data: settingsData } = await supabase.from('settings').select('*').single();
+      const targetRev = settingsData ? settingsData.target_revenue : 5000000;
+      
+      // Calculate mock revenue based on client count
+      // Asumsi: Rumah Tangga = Rp 50.000/bulan, Bisnis = Rp 150.000/bulan
+      const calculatedRevenue = ((countUmum || 0) * 50000) + ((countBisnis || 0) * 150000);
 
       setStats({
         umum: countUmum || 0,
         bisnis: countBisnis || 0,
         minjel: countMinjel || 0,
+        revenue: calculatedRevenue,
+        target_revenue: targetRev
       });
+      setTargetRevenueInput(targetRev.toString());
     } catch (err) {
       console.error('Error fetching statistics:', err);
     }
@@ -144,22 +185,83 @@ export default function AdminDashboard({ onBackToWeb }) {
   const fetchData = async () => {
     if (!supabase) return;
     setLoadingData(true);
-    let tableName = 'registrations';
-    if (activeTab === 'bisnis') tableName = 'business_registrations';
-    if (activeTab === 'minjel') tableName = 'minjel_registrations';
 
     try {
-      const { data, error } = await supabase
-        .from(tableName)
-        .select('*')
-        .order('created_at', { ascending: false });
+      if (activeTab === 'staf') {
+        const { data, error } = await supabase
+          .from('staff_users')
+          .select('*')
+          .order('created_at', { ascending: false });
+        if (error) throw error;
+        setDataList(data || []);
+      } else if (activeTab === 'tugas') {
+        const { data, error } = await supabase
+          .from('pickup_tasks')
+          .select(`
+            *,
+            registrations(*),
+            business_registrations(*),
+            minjel_registrations(*)
+          `)
+          .order('scheduled_date', { ascending: true });
+        
+        if (error) throw error;
+        setDataList(data || []);
+      } else {
+        let tableName = 'registrations';
+        if (activeTab === 'bisnis') tableName = 'business_registrations';
+        if (activeTab === 'minjel') tableName = 'minjel_registrations';
+        
+        const { data, error } = await supabase
+          .from(tableName)
+          .select('*')
+          .order('created_at', { ascending: false });
 
-      if (error) throw error;
-      setDataList(data || []);
+        if (error) throw error;
+        setDataList(data || []);
+      }
     } catch (err) {
-      console.error(`Error fetching ${tableName}:`, err);
+      console.error('Error fetching data:', err);
     } finally {
       setLoadingData(false);
+    }
+  };
+
+  const handleSchedulePickup = async () => {
+    if (!scheduleDate) return toast.error('Pilih tanggal jemput!');
+    
+    let payload = { scheduled_date: scheduleDate, status: 'pending' };
+    if (activeTab === 'bisnis') payload.business_id = selectedRecord.id;
+    else if (activeTab === 'minjel') payload.minjel_id = selectedRecord.id;
+    else payload.registration_id = selectedRecord.id;
+
+    const { error } = await supabase.from('pickup_tasks').insert(payload);
+    if (!error) {
+        toast.success('Tugas berhasil dijadwalkan!');
+        setScheduleModalOpen(false);
+        setScheduleDate('');
+    } else {
+        toast.error('Gagal menjadwalkan: ' + error.message);
+    }
+  };
+
+  const handleCompletePickup = async () => {
+    if (!pickupWeight) return toast.error('Masukkan estimasi berat!');
+    
+    const { error } = await supabase.from('pickup_tasks').update({
+        status: 'completed',
+        weight_kg: parseFloat(pickupWeight),
+        report_notes: pickupNotes,
+        handled_by: session.user.id
+    }).eq('id', selectedRecord.id);
+
+    if (!error) {
+        toast.success('Tugas selesai dan dilaporkan!');
+        setCompleteModalOpen(false);
+        setSelectedRecord(null);
+        fetchData(); 
+    } else {
+        toast.error('Gagal melapor: ' + error.message);
     }
   };
 
@@ -170,6 +272,13 @@ export default function AdminDashboard({ onBackToWeb }) {
     const emailStr = (item.email || '').toLowerCase();
     const whatsapp = (item.whatsapp || '').toLowerCase();
     const address = (item.alamat || '').toLowerCase();
+
+    if (activeTab === 'tugas') {
+      const client = item.registrations || item.business_registrations || item.minjel_registrations || {};
+      const cName = (client.nama || client.nama_bisnis || '').toLowerCase();
+      const cAddress = (client.alamat || '').toLowerCase();
+      return cName.includes(query) || cAddress.includes(query);
+    }
 
     return (
       name.includes(query) ||
@@ -190,10 +299,15 @@ export default function AdminDashboard({ onBackToWeb }) {
     });
   };
 
+  const formatCurrency = (value) => {
+    return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(value);
+  };
+
   // Render Login view if not logged in
   if (!session) {
     return (
       <div className="admin-auth-container">
+        <Toaster position="top-right" />
         <div className="admin-auth-card">
           <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '1rem', color: 'var(--color-primary)' }}>
             <Shield size={44} />
@@ -241,6 +355,7 @@ export default function AdminDashboard({ onBackToWeb }) {
 
   return (
     <div className="admin-layout">
+      <Toaster position="top-right" />
       {/* Header */}
       <header className="admin-header">
         <div className="admin-logo">
@@ -295,40 +410,68 @@ export default function AdminDashboard({ onBackToWeb }) {
               <p>{stats.minjel} Anggota</p>
             </div>
           </div>
+
+          {userRole && (
+            <div className="admin-stat-card">
+              <div className="stat-icon-wrapper" style={{ backgroundColor: '#ECFDF5', color: '#047857' }}>
+                <CheckCircle size={24} />
+              </div>
+              <div className="stat-info" style={{ width: '100%' }}>
+                <h4>Pendapatan Bulan Ini</h4>
+                <p>{formatCurrency(stats.revenue)}</p>
+                
+                {/* Progress Bar */}
+                <div style={{ marginTop: '0.75rem', width: '100%' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--color-text-light)', marginBottom: '0.25rem' }}>
+                    <span>Pencapaian</span>
+                    <span>Target: {formatCurrency(stats.target_revenue)}</span>
+                  </div>
+                  <div style={{ width: '100%', height: '6px', backgroundColor: '#E5E7EB', borderRadius: '3px', overflow: 'hidden' }}>
+                    <div style={{ 
+                      height: '100%', 
+                      backgroundColor: '#047857', 
+                      width: `${Math.min(100, Math.round((stats.revenue / stats.target_revenue) * 100))}%`,
+                      transition: 'width 0.5s ease-in-out'
+                    }}></div>
+                  </div>
+                  <div style={{ fontSize: '0.7rem', color: '#047857', marginTop: '0.25rem', textAlign: 'right', fontWeight: 'bold' }}>
+                    {Math.round((stats.revenue / stats.target_revenue) * 100)}%
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </section>
 
         {/* Controls Panel */}
         <section className="admin-controls">
           <div className="admin-tabs">
-            <button
-              className={`tab-btn ${activeTab === 'umum' ? 'active' : ''}`}
-              onClick={() => {
-                setActiveTab('umum');
-                setSearchQuery('');
-              }}
-            >
-              Rumah Tangga ({stats.umum})
-            </button>
             {userRole !== 'operasional' && (
-              <button
-                className={`tab-btn ${activeTab === 'bisnis' ? 'active' : ''}`}
-                onClick={() => {
-                  setActiveTab('bisnis');
-                  setSearchQuery('');
-                }}
-              >
-                Bisnis ({stats.bisnis})
-              </button>
+              <>
+                <button className={`tab-btn ${activeTab === 'umum' ? 'active' : ''}`} onClick={() => { setActiveTab('umum'); setSearchQuery(''); }}>
+                  Rumah Tangga ({stats.umum})
+                </button>
+                <button className={`tab-btn ${activeTab === 'bisnis' ? 'active' : ''}`} onClick={() => { setActiveTab('bisnis'); setSearchQuery(''); }}>
+                  Bisnis ({stats.bisnis})
+                </button>
+                <button className={`tab-btn ${activeTab === 'minjel' ? 'active' : ''}`} onClick={() => { setActiveTab('minjel'); setSearchQuery(''); }}>
+                  Minyak Jelantah ({stats.minjel})
+                </button>
+              </>
             )}
-            <button
-              className={`tab-btn ${activeTab === 'minjel' ? 'active' : ''}`}
-              onClick={() => {
-                setActiveTab('minjel');
-                setSearchQuery('');
-              }}
-            >
-              Minyak Jelantah ({stats.minjel})
+            <button className={`tab-btn ${activeTab === 'tugas' ? 'active' : ''}`} onClick={() => { setActiveTab('tugas'); setSearchQuery(''); }}>
+              Tugas Penjemputan
             </button>
+            {userRole === 'management' && (
+              <>
+                <button className={`tab-btn ${activeTab === 'staf' ? 'active' : ''}`} onClick={() => { setActiveTab('staf'); setSearchQuery(''); }}>
+                  Kelola Staf
+                </button>
+                <button className={`tab-btn ${activeTab === 'pengaturan' ? 'active' : ''}`} onClick={() => { setActiveTab('pengaturan'); setSearchQuery(''); }}>
+                  Pengaturan
+                </button>
+              </>
+            )}
           </div>
 
           <div className="search-wrapper">
@@ -343,7 +486,75 @@ export default function AdminDashboard({ onBackToWeb }) {
           </div>
         </section>
 
+        {/* Tambah Staf Section */}
+        {activeTab === 'staf' && (
+          <section className="admin-controls" style={{ marginBottom: '1.5rem', backgroundColor: '#F9FAFB' }}>
+            <h4 style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Users size={18}/> Tambah Staf Baru</h4>
+            <div className="staff-form-grid">
+              <div>
+                 <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '0.25rem', color: 'var(--color-text-light)' }}>Email Akun</label>
+                 <input type="email" value={newStaffEmail} onChange={e=>setNewStaffEmail(e.target.value)} className="search-input" placeholder="email@contoh.com" style={{ width: '100%' }} />
+              </div>
+              <div>
+                 <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '0.25rem', color: 'var(--color-text-light)' }}>Kata Sandi (Password)</label>
+                 <input type="password" value={newStaffPassword} onChange={e=>setNewStaffPassword(e.target.value)} className="search-input" placeholder="Rahasia123!" style={{ width: '100%' }} />
+              </div>
+              <div>
+                 <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '0.25rem', color: 'var(--color-text-light)' }}>Role</label>
+                 <select value={newStaffRole} onChange={e=>setNewStaffRole(e.target.value)} className="search-input" style={{ width: '100%' }}>
+                    <option value="operasional">Operasional (Tim Lapangan)</option>
+                    <option value="management">Management (Admin)</option>
+                 </select>
+              </div>
+              <button 
+                onClick={async () => {
+                  if(!newStaffEmail || !newStaffPassword) return toast.error('Email dan password wajib diisi!');
+                  const { error } = await supabase.from('staff_users').insert({ email: newStaffEmail, password: newStaffPassword, role: newStaffRole });
+                  if(!error) {
+                    toast.success('Staf baru berhasil ditambahkan!');
+                    setNewStaffEmail('');
+                    setNewStaffPassword('');
+                    fetchData();
+                  } else {
+                    toast.error('Gagal menambahkan staf');
+                  }
+                }}
+                className="btn-auth-submit" style={{ margin: 0, padding: '0.75rem 1.5rem', height: '100%', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Plus size={16}/> Tambah Staf
+              </button>
+            </div>
+          </section>
+        )}
+
+        {/* Pengaturan Section */}
+        {activeTab === 'pengaturan' && (
+          <section className="admin-controls" style={{ marginBottom: '1.5rem', backgroundColor: '#F9FAFB' }}>
+            <h4 style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><CheckCircle size={18}/> Pengaturan Target Bulanan</h4>
+            <div className="staff-form-grid" style={{ gridTemplateColumns: '1fr auto', alignItems: 'end' }}>
+              <div>
+                 <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '0.25rem', color: 'var(--color-text-light)' }}>Target Pendapatan (Rp)</label>
+                 <input type="number" value={targetRevenueInput} onChange={e=>setTargetRevenueInput(e.target.value)} className="search-input" placeholder="Misal: 5000000" style={{ width: '100%' }} />
+              </div>
+              <button 
+                onClick={async () => {
+                  if(!targetRevenueInput) return toast.error('Target wajib diisi!');
+                  const { error } = await supabase.from('settings').update({ target_revenue: parseInt(targetRevenueInput) }).eq('id', 1);
+                  if(!error) {
+                    toast.success('Target berhasil diperbarui!');
+                    fetchStats();
+                  } else {
+                    toast.error('Gagal memperbarui target');
+                  }
+                }}
+                className="btn-auth-submit" style={{ margin: 0, padding: '0.75rem 1.5rem', height: '100%', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <CheckCircle size={16}/> Simpan Pengaturan
+              </button>
+            </div>
+          </section>
+        )}
+        
         {/* Data Table */}
+        {activeTab !== 'pengaturan' && (
         <section className="table-wrapper">
           {loadingData ? (
             <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--color-text-light)' }}>
@@ -390,13 +601,31 @@ export default function AdminDashboard({ onBackToWeb }) {
                     <th>Aksi</th>
                   </tr>
                 )}
+                {activeTab === 'tugas' && (
+                  <tr>
+                    <th>Tanggal Jemput</th>
+                    <th>Klien</th>
+                    <th>Status</th>
+                    <th>Alamat</th>
+                    <th>Berat</th>
+                    <th>Aksi</th>
+                  </tr>
+                )}
+                {activeTab === 'staf' && (
+                  <tr>
+                    <th>Dibuat</th>
+                    <th>Email Staf</th>
+                    <th>Peran (Role)</th>
+                    <th>Aksi</th>
+                  </tr>
+                )}
               </thead>
               <tbody>
                 {filteredData.map((item) => (
                   <tr key={item.id}>
-                    <td>{formatDate(item.created_at)}</td>
                     {activeTab === 'umum' && (
                       <>
+                        <td>{formatDate(item.created_at)}</td>
                         <td style={{ fontWeight: 'bold' }}>{item.nama}</td>
                         <td>{item.whatsapp}</td>
                         <td style={{ maxWidth: '280px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -407,6 +636,7 @@ export default function AdminDashboard({ onBackToWeb }) {
                     )}
                     {activeTab === 'bisnis' && (
                       <>
+                        <td>{formatDate(item.created_at)}</td>
                         <td style={{ fontWeight: 'bold' }}>{item.nama_bisnis}</td>
                         <td>{item.nama} ({item.jabatan})</td>
                         <td>{item.whatsapp}</td>
@@ -416,6 +646,7 @@ export default function AdminDashboard({ onBackToWeb }) {
                     )}
                     {activeTab === 'minjel' && (
                       <>
+                        <td>{formatDate(item.created_at)}</td>
                         <td style={{ fontWeight: 'bold' }}>{item.nama}</td>
                         <td>{item.whatsapp}</td>
                         <td style={{ maxWidth: '280px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -424,21 +655,96 @@ export default function AdminDashboard({ onBackToWeb }) {
                         <td><span className="tag" style={{ backgroundColor: '#FEF3C7', color: '#B45309' }}>{item.frekuensi_setor}</span></td>
                       </>
                     )}
-                    <td>
-                      <button
-                        onClick={() => setSelectedRecord(item)}
-                        className="btn-action-view"
-                      >
-                        <Eye size={14} />
-                        Detail
-                      </button>
-                    </td>
+                    {activeTab === 'tugas' && (() => {
+                      const client = item.registrations || item.business_registrations || item.minjel_registrations || {};
+                      const clientType = item.registrations ? 'Umum' : (item.business_registrations ? 'Bisnis' : 'Minjel');
+                      const dateOnly = item.scheduled_date ? new Date(item.scheduled_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '-';
+                      return (
+                      <>
+                        <td style={{ fontWeight: 'bold' }}>{dateOnly}</td>
+                        <td>
+                          <div style={{ fontWeight: 'bold' }}>{client.nama || client.nama_bisnis}</div>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--color-primary)' }}>{clientType}</div>
+                        </td>
+                        <td>
+                          <span className="tag" style={{ 
+                            backgroundColor: item.status === 'completed' ? '#D1FAE5' : '#FEF3C7', 
+                            color: item.status === 'completed' ? '#065F46' : '#92400E' 
+                          }}>
+                            {(item.status || 'pending').toUpperCase()}
+                          </span>
+                        </td>
+                        <td style={{ maxWidth: '280px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {client.alamat}
+                        </td>
+                        <td>{item.weight_kg ? `${item.weight_kg} Kg` : '-'}</td>
+                      </>
+                      )
+                    })()}
+                    {activeTab === 'staf' && (() => {
+                      const dateOnly = item.created_at ? new Date(item.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '-';
+                      return (
+                      <>
+                        <td>{dateOnly}</td>
+                        <td style={{ fontWeight: 'bold' }}>{item.email}</td>
+                        <td>
+                          <span className="tag" style={{ backgroundColor: item.role === 'management' ? '#EEF2FF' : '#ECFDF5', color: item.role === 'management' ? '#4338CA' : '#047857' }}>
+                            {(item.role || 'operasional').toUpperCase()}
+                          </span>
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                            <button 
+                               onClick={() => {
+                                 setEditStaff(item);
+                                 setEditEmail(item.email);
+                                 setEditPassword('');
+                                 setEditRole(item.role || 'operasional');
+                               }}
+                               className="btn-action-view" style={{ padding: '0.4rem 0.8rem', fontSize: '0.75rem' }}>
+                               <Pencil size={14}/> Edit
+                            </button>
+                            <button 
+                               onClick={async () => {
+                                 toast((t) => (
+                                   <span>
+                                     Yakin hapus staf ini?
+                                     <button onClick={async () => {
+                                        toast.dismiss(t.id);
+                                        await supabase.from('staff_users').delete().eq('id', item.id);
+                                        toast.success('Staf berhasil dihapus');
+                                        fetchData();
+                                     }} style={{ marginLeft: '10px', background: '#DC2626', color: 'white', border: 'none', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer' }}>Ya, Hapus</button>
+                                     <button onClick={() => toast.dismiss(t.id)} style={{ marginLeft: '5px', background: '#E5E7EB', border: 'none', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer' }}>Batal</button>
+                                   </span>
+                                 ), { duration: 5000 });
+                               }}
+                               className="btn-back-home" style={{ backgroundColor: '#FEE2E2', color: '#DC2626', margin: 0, padding: '0.4rem 0.8rem', fontSize: '0.75rem', borderRadius: '0.25rem' }}>
+                               <Trash2 size={14}/> Hapus
+                            </button>
+                          </div>
+                        </td>
+                      </>
+                      )
+                    })()}
+                    {activeTab !== 'staf' && (
+                      <td>
+                        <button
+                          onClick={() => setSelectedRecord(item)}
+                          className="btn-action-view"
+                        >
+                          <Eye size={14} />
+                          Detail
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
             </table>
           )}
         </section>
+        )}
       </main>
 
       {/* Details Dialog */}
@@ -447,9 +753,11 @@ export default function AdminDashboard({ onBackToWeb }) {
           <div className="detail-modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="detail-modal-header">
               <h3>
-                {activeTab === 'bisnis'
-                  ? `Detail Kemitraan: ${selectedRecord.nama_bisnis}`
-                  : `Detail Pendaftaran: ${selectedRecord.nama}`}
+                {activeTab === 'tugas' 
+                  ? 'Detail Tugas Penjemputan' 
+                  : (activeTab === 'bisnis'
+                    ? `Detail Kemitraan: ${selectedRecord.nama_bisnis}`
+                    : `Detail Pendaftaran: ${selectedRecord.nama || ''}`)}
               </h3>
               <button className="detail-modal-close" onClick={() => setSelectedRecord(null)}>
                 <LogOut size={18} />
@@ -633,6 +941,66 @@ export default function AdminDashboard({ onBackToWeb }) {
                   </>
                 )}
 
+
+                {/* TAB TUGAS PENJEMPUTAN */}
+                {activeTab === 'tugas' && (() => {
+                  const client = selectedRecord.registrations || selectedRecord.business_registrations || selectedRecord.minjel_registrations || {};
+                  return (
+                  <>
+                    <div className="detail-section-title">Status Penjemputan</div>
+                    <div className="detail-item">
+                      <span className="detail-label">Status</span>
+                      <span className="detail-value" style={{ fontWeight: 'bold', color: selectedRecord.status === 'completed' ? '#059669' : '#D97706' }}>
+                        {(selectedRecord.status || 'pending').toUpperCase()}
+                      </span>
+                    </div>
+                    <div className="detail-item">
+                      <span className="detail-label">Tanggal Terjadwal</span>
+                      <span className="detail-value">{formatDate(selectedRecord.scheduled_date).split(' ')[0]}</span>
+                    </div>
+                    <div className="detail-item">
+                      <span className="detail-label">Berat Terambil (Kg)</span>
+                      <span className="detail-value">{selectedRecord.weight_kg ? `${selectedRecord.weight_kg} Kg` : '-'}</span>
+                    </div>
+                    
+                    <div className="detail-section-title">Informasi Klien</div>
+                    <div className="detail-item">
+                      <span className="detail-label">Nama Klien</span>
+                      <span className="detail-value">{client.nama || client.nama_bisnis}</span>
+                    </div>
+                    <div className="detail-item">
+                      <span className="detail-label">Kontak WA</span>
+                      <span className="detail-value">{client.whatsapp}</span>
+                    </div>
+                    <div className="detail-item detail-grid-full">
+                      <span className="detail-label">Alamat Penjemputan</span>
+                      <span className="detail-value">{client.alamat}</span>
+                    </div>
+                    {client.google_maps_link && (
+                      <div className="detail-item detail-grid-full">
+                        <span className="detail-label">Titik Maps</span>
+                        <span className="detail-value">
+                          <a href={client.google_maps_link} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', color: 'var(--color-primary)' }}>
+                            Buka di Google Maps <ExternalLink size={14} />
+                          </a>
+                        </span>
+                      </div>
+                    )}
+                    
+                    {selectedRecord.report_notes && (
+                      <>
+                        <div className="detail-section-title">Catatan Operasional</div>
+                        <div className="detail-item detail-grid-full">
+                          <span className="detail-value" style={{ fontStyle: 'italic', backgroundColor: '#F3F4F6', padding: '1rem', borderRadius: '0.5rem' }}>
+                            "{selectedRecord.report_notes}"
+                          </span>
+                        </div>
+                      </>
+                    )}
+                  </>
+                  );
+                })()}
+                
                 {/* TAB 3: MINYAK JELANTAH / MINJEL */}
                 {activeTab === 'minjel' && (
                   <>
@@ -697,6 +1065,129 @@ export default function AdminDashboard({ onBackToWeb }) {
                     </div>
                   </>
                 )}
+              </div>
+              
+              {/* Task Management Actions */}
+              <div style={{ marginTop: '2rem', paddingTop: '1rem', borderTop: '1px solid var(--color-border)' }}>
+                {activeTab !== 'tugas' && userRole === 'management' && !scheduleModalOpen && (
+                   <button className="btn-auth-submit" onClick={() => setScheduleModalOpen(true)} style={{ backgroundColor: '#059669', display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
+                     <Calendar size={18} /> Buat Jadwal Jemput
+                   </button>
+                )}
+                
+                {scheduleModalOpen && (
+                   <div style={{ padding: '1rem', backgroundColor: '#F3F4F6', borderRadius: '0.5rem' }}>
+                     <h4 style={{ marginBottom: '0.5rem' }}>Pilih Tanggal Penjemputan</h4>
+                     <input type="date" className="admin-auth-input" value={scheduleDate} onChange={e => setScheduleDate(e.target.value)} />
+                     <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
+                       <button className="btn-auth-submit" onClick={handleSchedulePickup}>Simpan Jadwal</button>
+                       <button className="btn-back-home" style={{ marginTop: 0 }} onClick={() => setScheduleModalOpen(false)}>Batal</button>
+                     </div>
+                   </div>
+                )}
+
+                {activeTab === 'tugas' && selectedRecord.status === 'pending' && userRole === 'operasional' && !completeModalOpen && (
+                   <button className="btn-auth-submit" onClick={() => setCompleteModalOpen(true)} style={{ backgroundColor: '#059669', display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
+                     <Truck size={18} /> Selesaikan Penjemputan
+                   </button>
+                )}
+
+                {completeModalOpen && (
+                   <div style={{ padding: '1rem', backgroundColor: '#F3F4F6', borderRadius: '0.5rem' }}>
+                     <h4 style={{ marginBottom: '1rem' }}>Laporan Hasil Jemput</h4>
+                     <div className="admin-auth-group">
+                       <label className="admin-auth-label">Berat Sampah (Kg)</label>
+                       <input type="number" step="0.1" className="admin-auth-input" value={pickupWeight} onChange={e => setPickupWeight(e.target.value)} placeholder="Misal: 5.5" />
+                     </div>
+                     <div className="admin-auth-group">
+                       <label className="admin-auth-label">Catatan Lapangan</label>
+                       <textarea className="admin-auth-input" value={pickupNotes} onChange={e => setPickupNotes(e.target.value)} placeholder="Tuliskan jika ada kendala atau catatan khusus..." rows="3"></textarea>
+                     </div>
+                     <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
+                       <button className="btn-auth-submit" onClick={handleCompletePickup}>Kirim Laporan</button>
+                       <button className="btn-back-home" style={{ marginTop: 0 }} onClick={() => setCompleteModalOpen(false)}>Batal</button>
+                     </div>
+                   </div>
+                )}
+              </div>
+
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Edit Staf Modal */}
+      {editStaff && (
+        <div className="detail-modal-overlay" onClick={() => setEditStaff(null)}>
+          <div className="detail-modal-content" style={{ maxWidth: '480px' }} onClick={e => e.stopPropagation()}>
+            <div className="detail-modal-header">
+              <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Pencil size={18} /> Edit Staf
+              </h3>
+              <button className="detail-modal-close" onClick={() => setEditStaff(null)}>
+                <X size={20} />
+              </button>
+            </div>
+            <div className="detail-modal-body">
+              <div className="admin-auth-form">
+                <div className="admin-auth-group">
+                  <label className="admin-auth-label">Email Akun</label>
+                  <input
+                    type="email"
+                    className="admin-auth-input"
+                    value={editEmail}
+                    onChange={e => setEditEmail(e.target.value)}
+                    placeholder="email@contoh.com"
+                  />
+                </div>
+                <div className="admin-auth-group">
+                  <label className="admin-auth-label">Password Baru <span style={{ fontWeight: 400, color: 'var(--color-text-light)', fontSize: '0.8rem' }}>(kosongkan jika tidak ingin mengubah)</span></label>
+                  <input
+                    type="password"
+                    className="admin-auth-input"
+                    value={editPassword}
+                    onChange={e => setEditPassword(e.target.value)}
+                    placeholder="Password baru..."
+                  />
+                </div>
+                <div className="admin-auth-group">
+                  <label className="admin-auth-label">Role</label>
+                  <select
+                    className="admin-auth-input"
+                    value={editRole}
+                    onChange={e => setEditRole(e.target.value)}
+                  >
+                    <option value="operasional">Operasional (Tim Lapangan)</option>
+                    <option value="management">Management (Admin)</option>
+                  </select>
+                </div>
+                <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem' }}>
+                  <button
+                    className="btn-auth-submit"
+                    style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}
+                    onClick={async () => {
+                      if (!editEmail) return toast.error('Email wajib diisi!');
+                      const payload = { email: editEmail, role: editRole };
+                      if (editPassword) payload.password = editPassword;
+                      const { error } = await supabase.from('staff_users').update(payload).eq('id', editStaff.id);
+                      if (!error) {
+                        toast.success('Data staf berhasil diperbarui!');
+                        setEditStaff(null);
+                        fetchData();
+                      } else {
+                        toast.error('Gagal memperbarui data staf');
+                      }
+                    }}
+                  >
+                    <CheckCircle size={16} /> Simpan Perubahan
+                  </button>
+                  <button
+                    className="btn-back-home"
+                    style={{ marginTop: 0 }}
+                    onClick={() => setEditStaff(null)}
+                  >
+                    Batal
+                  </button>
+                </div>
               </div>
             </div>
           </div>
