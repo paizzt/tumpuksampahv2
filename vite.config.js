@@ -1,0 +1,14 @@
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+import { cloudflare } from "@cloudflare/vite-plugin";
+
+const plugins = [react()];
+if (process.env.DISABLE_CLOUDFLARE !== 'true') {
+  plugins.push(cloudflare());
+}
+
+// https://vite.dev/config/
+export default defineConfig({
+  plugins,
+})
