@@ -23,7 +23,11 @@ import {
   Trash2,
   Plus,
   Pencil,
-  X
+  X,
+  DollarSign,
+  TrendingUp,
+  TrendingDown,
+  PieChart
 } from 'lucide-react';
 import toast, { Toaster } from 'react-hot-toast';
 
@@ -61,6 +65,11 @@ export default function AdminDashboard({ onBackToWeb }) {
   const [editEmail, setEditEmail] = useState('');
   const [editPassword, setEditPassword] = useState('');
   const [editRole, setEditRole] = useState('operasional');
+
+  // Akuntansi State
+  const [newTransaction, setNewTransaction] = useState({ type: 'income', category: 'Langganan Rumah Tangga', amount: '', description: '', transaction_date: new Date().toISOString().split('T')[0] });
+  const [accountingStats, setAccountingStats] = useState({ income: 0, expense: 0, balance: 0 });
+
 
   // Statistics & Settings
   const [stats, setStats] = useState({ umum: 0, bisnis: 0, minjel: 0, revenue: 0, target_revenue: 5000000 });
@@ -207,6 +216,20 @@ export default function AdminDashboard({ onBackToWeb }) {
         
         if (error) throw error;
         setDataList(data || []);
+      } else if (activeTab === 'akuntansi') {
+        const { data, error } = await supabase
+          .from('transactions')
+          .select('*')
+          .order('transaction_date', { ascending: false });
+        if (error) throw error;
+        setDataList(data || []);
+        
+        let inc = 0, exp = 0;
+        (data || []).forEach(tx => {
+          if (tx.type === 'income') inc += tx.amount;
+          if (tx.type === 'expense') exp += tx.amount;
+        });
+        setAccountingStats({ income: inc, expense: exp, balance: inc - exp });
       } else {
         let tableName = 'registrations';
         if (activeTab === 'bisnis') tableName = 'business_registrations';
@@ -278,6 +301,12 @@ export default function AdminDashboard({ onBackToWeb }) {
       const cName = (client.nama || client.nama_bisnis || '').toLowerCase();
       const cAddress = (client.alamat || '').toLowerCase();
       return cName.includes(query) || cAddress.includes(query);
+    }
+
+    if (activeTab === 'akuntansi') {
+      const desc = (item.description || '').toLowerCase();
+      const cat = (item.category || '').toLowerCase();
+      return desc.includes(query) || cat.includes(query);
     }
 
     return (
@@ -378,6 +407,7 @@ export default function AdminDashboard({ onBackToWeb }) {
       {/* Main Content */}
       <main className="admin-content">
         {/* Statistics Grid */}
+        {activeTab !== 'akuntansi' && (
         <section className="admin-stats-grid">
           <div className="admin-stat-card">
             <div className="stat-icon-wrapper" style={{ backgroundColor: 'var(--color-primary-light)' }}>
@@ -442,6 +472,40 @@ export default function AdminDashboard({ onBackToWeb }) {
             </div>
           )}
         </section>
+        )}
+
+        {/* Akuntansi Stats */}
+        {activeTab === 'akuntansi' && (
+          <section className="admin-stats-grid" style={{ marginBottom: '1.5rem' }}>
+            <div className="admin-stat-card">
+              <div className="stat-icon-wrapper" style={{ backgroundColor: '#D1FAE5', color: '#059669' }}>
+                <TrendingUp size={24} />
+              </div>
+              <div className="stat-info">
+                <h4>Total Pemasukan</h4>
+                <p>{formatCurrency(accountingStats.income)}</p>
+              </div>
+            </div>
+            <div className="admin-stat-card">
+              <div className="stat-icon-wrapper" style={{ backgroundColor: '#FEE2E2', color: '#DC2626' }}>
+                <TrendingDown size={24} />
+              </div>
+              <div className="stat-info">
+                <h4>Total Pengeluaran</h4>
+                <p>{formatCurrency(accountingStats.expense)}</p>
+              </div>
+            </div>
+            <div className="admin-stat-card">
+              <div className="stat-icon-wrapper" style={{ backgroundColor: '#E0F2FE', color: '#0284C7' }}>
+                <PieChart size={24} />
+              </div>
+              <div className="stat-info">
+                <h4>Saldo Bersih</h4>
+                <p style={{ color: accountingStats.balance < 0 ? '#DC2626' : 'inherit' }}>{formatCurrency(accountingStats.balance)}</p>
+              </div>
+            </div>
+          </section>
+        )}
 
         {/* Controls Panel */}
         <section className="admin-controls">
@@ -464,6 +528,9 @@ export default function AdminDashboard({ onBackToWeb }) {
             </button>
             {userRole === 'management' && (
               <>
+                <button className={`tab-btn ${activeTab === 'akuntansi' ? 'active' : ''}`} onClick={() => { setActiveTab('akuntansi'); setSearchQuery(''); }}>
+                  Akuntansi
+                </button>
                 <button className={`tab-btn ${activeTab === 'staf' ? 'active' : ''}`} onClick={() => { setActiveTab('staf'); setSearchQuery(''); }}>
                   Kelola Staf
                 </button>
@@ -485,6 +552,76 @@ export default function AdminDashboard({ onBackToWeb }) {
             />
           </div>
         </section>
+
+        {/* Akuntansi Tambah Transaksi Section */}
+        {activeTab === 'akuntansi' && (
+          <section className="admin-controls" style={{ marginBottom: '1.5rem', backgroundColor: '#F9FAFB' }}>
+            <h4 style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><DollarSign size={18}/> Tambah Transaksi Baru</h4>
+            <div className="staff-form-grid" style={{ gridTemplateColumns: '1fr 1fr 1fr 1fr 2fr auto', alignItems: 'end', gap: '0.5rem' }}>
+              <div>
+                 <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '0.25rem', color: 'var(--color-text-light)' }}>Tipe</label>
+                 <select value={newTransaction.type} onChange={e => setNewTransaction({...newTransaction, type: e.target.value, category: e.target.value === 'income' ? 'Langganan Rumah Tangga' : 'Operasional'})} className="search-input" style={{ width: '100%', padding: '0.5rem' }}>
+                    <option value="income">Pemasukan (+)</option>
+                    <option value="expense">Pengeluaran (-)</option>
+                 </select>
+              </div>
+              <div>
+                 <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '0.25rem', color: 'var(--color-text-light)' }}>Kategori</label>
+                 <select value={newTransaction.category} onChange={e => setNewTransaction({...newTransaction, category: e.target.value})} className="search-input" style={{ width: '100%', padding: '0.5rem' }}>
+                    {newTransaction.type === 'income' ? (
+                       <>
+                         <option value="Langganan Rumah Tangga">Langganan Umum</option>
+                         <option value="Langganan Bisnis">Langganan Bisnis</option>
+                         <option value="Penjualan Produk">Penjualan Kompos/Maggot</option>
+                         <option value="Lain-lain">Lain-lain</option>
+                       </>
+                    ) : (
+                       <>
+                         <option value="Operasional">Operasional Lapangan</option>
+                         <option value="Perawatan & Alat">Perawatan & Alat</option>
+                         <option value="Gaji & Insentif">Gaji & Insentif Staf</option>
+                         <option value="Marketing">Marketing / Iklan</option>
+                         <option value="Lain-lain">Lain-lain</option>
+                       </>
+                    )}
+                 </select>
+              </div>
+              <div>
+                 <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '0.25rem', color: 'var(--color-text-light)' }}>Nominal (Rp)</label>
+                 <input type="number" value={newTransaction.amount} onChange={e => setNewTransaction({...newTransaction, amount: e.target.value})} className="search-input" placeholder="0" style={{ width: '100%', padding: '0.5rem' }} />
+              </div>
+              <div>
+                 <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '0.25rem', color: 'var(--color-text-light)' }}>Tanggal</label>
+                 <input type="date" value={newTransaction.transaction_date} onChange={e => setNewTransaction({...newTransaction, transaction_date: e.target.value})} className="search-input" style={{ width: '100%', padding: '0.5rem' }} />
+              </div>
+              <div>
+                 <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '0.25rem', color: 'var(--color-text-light)' }}>Keterangan</label>
+                 <input type="text" value={newTransaction.description} onChange={e => setNewTransaction({...newTransaction, description: e.target.value})} className="search-input" placeholder="Detail transaksi..." style={{ width: '100%', padding: '0.5rem' }} />
+              </div>
+              <button 
+                onClick={async () => {
+                  if(!newTransaction.amount || !newTransaction.description) return toast.error('Nominal dan keterangan wajib diisi!');
+                  const { error } = await supabase.from('transactions').insert({ 
+                     type: newTransaction.type, 
+                     category: newTransaction.category, 
+                     amount: parseFloat(newTransaction.amount), 
+                     description: newTransaction.description,
+                     transaction_date: newTransaction.transaction_date
+                  });
+                  if(!error) {
+                    toast.success('Transaksi berhasil ditambahkan!');
+                    setNewTransaction({...newTransaction, amount: '', description: ''});
+                    fetchData();
+                  } else {
+                    toast.error('Gagal menambahkan transaksi');
+                  }
+                }}
+                className="btn-auth-submit" style={{ margin: 0, padding: '0.75rem 1.5rem', height: '100%', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Plus size={16}/> Simpan
+              </button>
+            </div>
+          </section>
+        )}
 
         {/* Tambah Staf Section */}
         {activeTab === 'staf' && (
@@ -619,6 +756,16 @@ export default function AdminDashboard({ onBackToWeb }) {
                     <th>Aksi</th>
                   </tr>
                 )}
+                {activeTab === 'akuntansi' && (
+                  <tr>
+                    <th>Tanggal</th>
+                    <th>Tipe</th>
+                    <th>Kategori</th>
+                    <th>Keterangan</th>
+                    <th>Nominal</th>
+                    <th>Aksi</th>
+                  </tr>
+                )}
               </thead>
               <tbody>
                 {filteredData.map((item) => (
@@ -727,7 +874,49 @@ export default function AdminDashboard({ onBackToWeb }) {
                       </>
                       )
                     })()}
-                    {activeTab !== 'staf' && (
+                    {activeTab === 'akuntansi' && (() => {
+                      const dateOnly = item.transaction_date ? new Date(item.transaction_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '-';
+                      return (
+                      <>
+                        <td>{dateOnly}</td>
+                        <td>
+                          <span className="tag" style={{ backgroundColor: item.type === 'income' ? '#D1FAE5' : '#FEE2E2', color: item.type === 'income' ? '#065F46' : '#991B1B' }}>
+                            {item.type === 'income' ? 'Pemasukan' : 'Pengeluaran'}
+                          </span>
+                        </td>
+                        <td style={{ fontWeight: 'bold' }}>{item.category}</td>
+                        <td style={{ maxWidth: '280px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {item.description}
+                        </td>
+                        <td style={{ color: item.type === 'income' ? '#059669' : '#DC2626', fontWeight: 'bold' }}>
+                          {item.type === 'income' ? '+' : '-'}{formatCurrency(item.amount)}
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                            <button 
+                               onClick={async () => {
+                                 toast((t) => (
+                                   <span>
+                                     Yakin hapus transaksi ini?
+                                     <button onClick={async () => {
+                                        toast.dismiss(t.id);
+                                        await supabase.from('transactions').delete().eq('id', item.id);
+                                        toast.success('Transaksi berhasil dihapus');
+                                        fetchData();
+                                     }} style={{ marginLeft: '10px', background: '#DC2626', color: 'white', border: 'none', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer' }}>Ya, Hapus</button>
+                                     <button onClick={() => toast.dismiss(t.id)} style={{ marginLeft: '5px', background: '#E5E7EB', border: 'none', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer' }}>Batal</button>
+                                   </span>
+                                 ), { duration: 5000 });
+                               }}
+                               className="btn-back-home" style={{ backgroundColor: '#FEE2E2', color: '#DC2626', margin: 0, padding: '0.4rem 0.8rem', fontSize: '0.75rem', borderRadius: '0.25rem' }}>
+                               <Trash2 size={14}/> Hapus
+                            </button>
+                          </div>
+                        </td>
+                      </>
+                      )
+                    })()}
+                    {activeTab !== 'staf' && activeTab !== 'akuntansi' && (
                       <td>
                         <button
                           onClick={() => setSelectedRecord(item)}
